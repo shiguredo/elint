@@ -5,6 +5,7 @@ mod case_over_if;
 mod deep_case_nesting;
 mod element_bif;
 mod ifdef_test_at_end;
+mod nested_call_argument;
 mod newline_after_arrow;
 mod strict_generator;
 
@@ -49,6 +50,7 @@ pub const RULES: &[Rule] = &[
     deep_case_nesting::RULE,
     element_bif::RULE,
     ifdef_test_at_end::RULE,
+    nested_call_argument::RULE,
     newline_after_arrow::RULE,
     strict_generator::RULE,
 ];
