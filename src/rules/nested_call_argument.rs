@@ -30,7 +30,10 @@ fn check_node(branch: &BranchContext, node: erl_parse::NodeView<'_>, errors: &mu
         return;
     };
     for arg in args.children() {
-        if arg.kind() != erl_parse::SyntaxKind::CallExpr || is_macro_invocation(branch, arg) {
+        if arg.kind() != erl_parse::SyntaxKind::CallExpr
+            || is_macro_invocation(branch, arg)
+            || is_measurement_bif(branch, arg)
+        {
             continue;
         }
         if let Some(span) = branch.span_of_range(arg.token_range()) {
@@ -40,6 +43,57 @@ fn check_node(branch: &BranchContext, node: erl_parse::NodeView<'_>, errors: &mu
             });
         }
     }
+}
+
+/// Pure measurement BIFs whose result reads naturally when passed inline.
+const MEASUREMENT_BIFS: &[(&str, usize)] = &[
+    ("length", 1),
+    ("tuple_size", 1),
+    ("map_size", 1),
+    ("byte_size", 1),
+    ("bit_size", 1),
+];
+
+/// Returns whether `call` is a call to one of the [`MEASUREMENT_BIFS`],
+/// unqualified or qualified with `erlang`.
+///
+/// The check is by callee name and arity only: elint does not resolve imports
+/// or local definitions, so a local function with the same name and arity is
+/// treated as the BIF too.
+fn is_measurement_bif(branch: &BranchContext, call: erl_parse::NodeView<'_>) -> bool {
+    let mut children = call.children();
+    let (Some(callee), Some(args)) = (children.next(), children.next()) else {
+        return false;
+    };
+    if args.kind() != erl_parse::SyntaxKind::ArgumentList {
+        return false;
+    }
+    let arity = args.children().count();
+    let name = match callee.kind() {
+        erl_parse::SyntaxKind::AtomExpr => callee,
+        erl_parse::SyntaxKind::RemoteExpr => {
+            let mut parts = callee.children();
+            let (Some(module), Some(name)) = (parts.next(), parts.next()) else {
+                return false;
+            };
+            if !atom_eq(branch, module, "erlang") {
+                return false;
+            }
+            name
+        }
+        _ => return false,
+    };
+    MEASUREMENT_BIFS
+        .iter()
+        .any(|&(bif, expected)| expected == arity && atom_eq(branch, name, bif))
+}
+
+fn atom_eq(branch: &BranchContext, node: erl_parse::NodeView<'_>, expected: &str) -> bool {
+    node.indexed_tokens().any(|(i, _)| {
+        branch.source_tokens.get(i.get()).is_some_and(|token| {
+            matches!(token.value(), erl_tokenize::TokenValue::Atom(name) if name == expected)
+        })
+    })
 }
 
 /// Returns whether `call` is the synthetic call the preprocessor stands in
@@ -135,6 +189,37 @@ foo(A) -> ?M(A).
 ";
         // The call inside the macro body maps to the macro call site.
         assert_eq!(findings(check, src), ["?M(A)"]);
+    }
+
+    #[test]
+    fn ignores_measurement_bif_argument() {
+        let src = "-module(t).\nfoo(A) -> f(length(A)).\n";
+        assert!(findings(check, src).is_empty());
+    }
+
+    #[test]
+    fn ignores_remote_measurement_bif_argument() {
+        let src = "-module(t).\nfoo(A) -> f(erlang:tuple_size(A)).\n";
+        assert!(findings(check, src).is_empty());
+    }
+
+    #[test]
+    fn flags_non_erlang_remote_call_argument() {
+        let src = "-module(t).\nfoo(A) -> f(lists:length(A)).\n";
+        assert_eq!(findings(check, src), ["lists:length(A)"]);
+    }
+
+    #[test]
+    fn flags_measurement_bif_with_wrong_arity() {
+        let src = "-module(t).\nfoo(A) -> f(length(A, A)).\n";
+        // `length/2` is not the measurement BIF, so it is reported.
+        assert_eq!(findings(check, src), ["length(A, A)"]);
+    }
+
+    #[test]
+    fn flags_other_call_next_to_measurement_bif_argument() {
+        let src = "-module(t).\nfoo(A) -> f(length(A), g(A)).\n";
+        assert_eq!(findings(check, src), ["g(A)"]);
     }
 
     #[test]

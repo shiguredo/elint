@@ -12,7 +12,7 @@ remote(Item) ->
 
 
 later(Item) ->
-    combine(Item, length(Item)).
+    combine(Item, normalize(Item)).
 
 
 nested(Item) ->

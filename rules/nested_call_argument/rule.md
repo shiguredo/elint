@@ -14,6 +14,8 @@ It does not report:
   right-hand side of `=`, an element of a list / tuple / map / binary, or an
   operand of an operator
 - a call used as the target of another call (`(f())(A)`)
+- a call to a pure measurement BIF (`length/1`, `tuple_size/1`, `map_size/1`,
+  `byte_size/1`, `bit_size/1`), unqualified or qualified with `erlang`
 - an unknown macro invocation `?M(...)`, for which the preprocessor stands in
   a synthetic call
 
@@ -46,9 +48,15 @@ average(Values) ->
 ## Known limitations
 
 The rule does not judge whether an intermediate value deserves a name. A short,
-obviously pure call such as `length(List)` is still reported when it is passed
-straight to another call. Suppress such a use with an `-elint_expect` attribute
-(see `elint --explain elint_expect_attr`) when the nested form is clearer.
+obviously pure call such as `lists:reverse(List)` is still reported when it is
+passed straight to another call. Suppress such a use with an `-elint_expect`
+attribute (see `elint --explain elint_expect_attr`) when the nested form is
+clearer.
+
+The measurement BIF exemption is decided by callee name and arity, because
+elint does not resolve imports or local definitions. A local function with the
+same name and arity as a measurement BIF (for example `length/1` after
+`no_auto_import([length/1])`) is therefore passed over as well.
 
 A macro body is linted through each of its call sites, so a nested call inside
 a `-define` body is reported once per expansion.
