@@ -1,4 +1,4 @@
-name: Create GitHub Release and Publish to crates.io
+name: Create GitHub Release
 
 on:
   push:
@@ -14,9 +14,9 @@ jobs:
       - run: rustup default stable
       - run: rustup component add rustfmt clippy
       # Guard against a `v*` tag whose name does not match Cargo.toml.
-      # Without this, a tag like `v0.1.2` pushed against a crate
-      # still on `version = "0.1.1"` would silently publish 0.1.1 to
-      # crates.io while the GitHub Release advertised v0.1.2.
+      # The release binaries are built from the tagged commit, so a tag
+      # like `v0.1.2` against a crate still on `version = "0.1.1"` would
+      # attach binaries whose `--version` disagrees with the tag.
       # `cargo metadata + jq` is preferred over `cargo pkgid | sed` so
       # a future change to cargo's pkgid output format cannot silently
       # break the check. `jq` is preinstalled on ubuntu-latest.
@@ -31,8 +31,8 @@ jobs:
             exit 1
           fi
       # The `validate` job re-runs the CI suite so a broken commit
-      # that somehow received a `v*` tag never publishes, even if the
-      # push-time CI on that commit failed or was skipped.
+      # that somehow received a `v*` tag never becomes a release, even if
+      # the push-time CI on that commit failed or was skipped.
       - run: cargo test --all
       - run: cargo test --doc
       - run: cargo fmt --all -- --check
@@ -40,33 +40,9 @@ jobs:
       - env:
           RUSTDOCFLAGS: -D warnings
         run: cargo doc --no-deps
-      # Packaging smoke test: exercises manifest metadata, include /
-      # exclude, readme path, and the verify pass in a clean copy.
-      - run: cargo publish --dry-run
-
-  # publish first: crates.io publish is non-reversible (unpublish is
-  # restricted to 72 hours and only removes the version from the index,
-  # not from downstream Cargo.lock files), so make it the guarding step.
-  # If it fails, no orphan github-release with a version that does not
-  # exist on crates.io is left behind. A github-release failure after
-  # publish succeeds is recoverable by re-running `gh release create`
-  # against the existing tag.
-  publish:
-    needs: validate
-    runs-on: ubuntu-latest
-    # environment: release  # Optional: for enhanced security
-    permissions:
-      id-token: write
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - uses: rust-lang/crates-io-auth-action@c6f97d42243bad5fab37ca0427f495c86d5b1a18 # v1.0.5
-        id: auth
-      - run: cargo publish
-        env:
-          CARGO_REGISTRY_TOKEN: ${{ steps.auth.outputs.token }}
 
   github-release:
-    needs: publish
+    needs: validate
     runs-on: ubuntu-latest
     permissions:
       contents: write
